@@ -1,0 +1,164 @@
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shop Payments</title>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script src="https://js.stripe.com/v3/"></script>
+    <script src="https://www.paypal.com/sdk/js?client-id=YOUR_PAYPAL_CLIENT_ID&currency=USD"></script>
+    <style>
+        body {
+        font-family: Arial, sans-serif;
+        background: #f7f7f7;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+        }
+        .container {
+        background: #fff;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0px 0px 15px rgba(0,0,0,0.1);
+        width: 400px;
+        margin-bottom: 20px;
+        }
+        h2 {
+        text-align: center;
+        }
+        select, input, button {
+        width: 100%;
+        padding: 10px;
+        margin: 10px 0;
+        font-size: 16px;
+        }
+        ul {
+        list-style: none;
+        padding-left: 0;
+        }
+        li {
+        background: #eee;
+        margin-bottom: 5px;
+        padding: 8px;
+        border-radius: 5px;
+        }
+        #paypal-button-container {
+        margin-top: 10px;
+        }
+    </style>
+    </head>
+    <body>
+
+    <div class="container">
+    <h2>Shop Payments</h2>
+
+    <!-- Select Payment Method -->
+    <select id="payment-method">
+        <option value="RAZORPAY">Razorpay</option>
+        <option value="STRIPE">Stripe</option>
+        <option value="PAYPAL">PayPal</option>
+    </select>
+
+    <!-- Order ID input -->
+    <input type="text" id="order-id" placeholder="Enter Order ID">
+
+    <button id="create-order-btn">Create Order & Pay</button>
+
+    <h3>Your Payments:</h3>
+    <ul id="payments-list"></ul>
+
+    <div id="paypal-button-container"></div>
+    </div>
+
+    <script>
+    const API_BASE = "http://localhost:8000/api/v1/shop/payments/"; // Replace with your API
+    const CSRF_TOKEN = ""; // if using Django CSRF, include token here
+
+    async function fetchPayments() {
+    const res = await fetch(API_BASE, {
+        headers: { "Content-Type": "application/json" }
+    });
+    const data = await res.json();
+    const list = document.getElementById("payments-list");
+    list.innerHTML = "";
+    if (data.success) {
+        data.data.forEach(payment => {
+        const li = document.createElement("li");
+        li.textContent = `ID: ${payment.id}, Method: ${payment.method}, Status: ${payment.status}, Amount: ${payment.amount}`;
+        list.appendChild(li);
+        });
+    }
+    }
+
+    document.getElementById("create-order-btn").addEventListener("click", async () => {
+    const method = document.getElementById("payment-method").value;
+    const orderId = document.getElementById("order-id").value;
+
+    if (!orderId) return alert("Please enter an Order ID");
+
+    // Create order on backend
+    const res = await fetch(`${API_BASE}create-order/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_id: orderId, method })
+    });
+    const data = await res.json();
+    if (!data.success) return alert(data.message);
+
+    if (method === "RAZORPAY") {
+        const options = {
+        key: data.data.razorpay_key,
+        amount: data.data.amount,
+        currency: data.data.currency,
+        order_id: data.data.razorpay_order_id,
+        handler: async function(response) {
+            // Verify payment
+            const verifyRes = await fetch(`${API_BASE}verify/`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                method: "RAZORPAY",
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature
+            })
+            });
+            const verifyData = await verifyRes.json();
+            console.log(verifyData)
+            alert(verifyData.message);
+            fetchPayments();
+        }
+        };
+        const rzp = new Razorpay(options);
+        rzp.open();
+    } else if (method === "STRIPE") {
+        const stripe = Stripe("YOUR_STRIPE_KEY"); // Replace with Stripe public key
+        await stripe.redirectToCheckout({ sessionId: data.data.session_id });
+    } else if (method === "PAYPAL") {
+        paypal.Buttons({
+        createOrder: () => data.data.approval_url,
+        onApprove: async function(details) {
+            const verifyRes = await fetch(`${API_BASE}verify/`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                method: "PAYPAL",
+                payment_id: details.id,
+                payer_id: details.payer.payer_id
+            })
+            });
+            const verifyData = await verifyRes.json();
+            alert(verifyData.message);
+            fetchPayments();
+        }
+        }).render("#paypal-button-container");
+    }
+    });
+
+    // Initial fetch
+    fetchPayments();
+    </script>
+
+    </body>
+    </html>
